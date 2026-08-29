@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "kiryuuki.oma-calvomi",
+  "name": "OmaCalvomi",
+  "version": "1.0.0",
+  "author": "Kiryuuki",
+  "license": "MIT",
+  "description": "Calendar & Agenda for Omarchy with month grid, ISO weeks, Yuvomi synchronization, quick event & birthday creation, recurrence patterns, and meeting alerts. Requires a self-hosted Yuvomi server.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "OmaCalvomi",
+    "description": "Month grid calendar with Yuvomi agenda, birthdays, and event creator",
+    "category": "Time",
+    "allowMultiple": false,
+    "defaultSection": "center"
+  },
+  "omarchy": {
+    "clonedFrom": "tmn73.calendar"
+  }
+}
