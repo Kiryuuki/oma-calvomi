@@ -127,7 +127,6 @@ def api_request(base_url, endpoint, api_key, method="GET", body=None, params=Non
 def sanitize_text(text: str, max_len: int = 500) -> str:
     if not text:
         return ""
-    # Strip ANSI control characters and limit length
     clean = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', str(text)).strip()
     return clean[:max_len]
 
@@ -176,18 +175,18 @@ def create_event(title, start_iso, end_iso, all_day=False, location="", descript
 
     payload = {
         "title": sanitize_text(title, 200),
-        "start": str(start_iso).strip(),
-        "end": str(end_iso).strip(),
-        "allDay": bool(all_day),
+        "start_datetime": str(start_iso).strip(),
+        "end_datetime": str(end_iso).strip(),
+        "all_day": 1 if all_day else 0,
         "location": sanitize_text(location, 300),
         "description": sanitize_text(description, 2000),
         "color": sanitize_text(color, 20) or "#3B82F6",
     }
     if recurrence:
-        payload["recurrence"] = sanitize_text(recurrence, 100)
+        payload["recurrence_rule"] = sanitize_text(recurrence, 100)
 
     try:
-        res = api_request(base_url, "/api/v1/calendar/events", api_key, method="POST", body=payload)
+        res = api_request(base_url, "/api/v1/calendar", api_key, method="POST", body=payload)
         sync(config_path)
         return {"ok": True, "data": res}
     except Exception as e:
@@ -209,28 +208,30 @@ def sync(config_path=DEFAULT_CONFIG_PATH, out_path=CONTRACT_PATH):
         return
 
     now = datetime.now()
-    start_dt = (now - timedelta(days=14)).strftime("%Y-%m-%dT00:00:00")
-    end_dt = (now + timedelta(days=90)).strftime("%Y-%m-%dT23:59:59")
+    start_dt = (now - timedelta(days=14)).strftime("%Y-%m-%d")
+    end_dt = (now + timedelta(days=90)).strftime("%Y-%m-%d")
 
     events_data = []
     try:
-        res = api_request(base_url, "/api/v1/calendar/events", api_key, params={"start": start_dt, "end": end_dt})
-        if isinstance(res, list):
+        res = api_request(base_url, "/api/v1/calendar", api_key, params={"from": start_dt, "to": end_dt})
+        if isinstance(res, dict):
+            events_data = res.get("data") or res.get("events") or []
+        elif isinstance(res, list):
             events_data = res
-        elif isinstance(res, dict):
-            events_data = res.get("events") or res.get("data") or []
     except Exception as e:
         print(f"Calendar events fetch failed: {e}", file=sys.stderr)
 
     normalized = []
     for ev in events_data:
         t = sanitize_text(ev.get("title") or "Untitled", 200)
-        s = str(ev.get("start") or "").strip()
-        e = str(ev.get("end") or s).strip()
+        s = str(ev.get("start_datetime") or ev.get("start") or "").strip()
+        e = str(ev.get("end_datetime") or ev.get("end") or s).strip()
         loc = sanitize_text(ev.get("location") or "", 300)
         desc = sanitize_text(ev.get("description") or "", 2000)
         col = sanitize_text(ev.get("color") or "#3B82F6", 20)
-        all_day = bool(ev.get("allDay", False))
+        all_day = bool(ev.get("all_day") or ev.get("allDay", False))
+        is_bday = bool(ev.get("icon") == "cake" or ev.get("birthday_name"))
+        rrule = sanitize_text(ev.get("recurrence_rule") or ev.get("recurrence") or "", 100)
 
         if s:
             normalized.append({
@@ -239,9 +240,11 @@ def sync(config_path=DEFAULT_CONFIG_PATH, out_path=CONTRACT_PATH):
                 "start": s,
                 "end": e,
                 "allDay": all_day,
+                "isBirthday": is_bday,
                 "location": loc,
                 "description": desc,
                 "color": col,
+                "recurrence": rrule,
                 "source": "yuvomi",
             })
 
@@ -260,7 +263,6 @@ def main():
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Config file path")
     parser.add_argument("--out", default=str(CONTRACT_PATH), help="Output state path")
     parser.add_argument("--test", action="store_true", help="Test connection")
-    parser.add_argument("--save-config", action="store_true", help="Save config from stdin")
     parser.add_argument("--create-event", action="store_true", help="Create calendar event")
     parser.add_argument("--create-birthday", action="store_true", help="Create birthday")
     parser.add_argument("--title", default="")
@@ -274,42 +276,13 @@ def main():
     parser.add_argument("--desc", default="")
     parser.add_argument("--color", default="#3B82F6")
     parser.add_argument("--recurrence", default="")
+    parser.add_argument("--check-alerts", action="store_true")
     args = parser.parse_args()
 
-    if args.save_config:
-        # Read payload safely from stdin (never in sys.argv cmdline)
-        try:
-            stdin_data = sys.stdin.read().strip()
-            payload = json.loads(stdin_data) if stdin_data else {}
-            cfg = load_config(args.config)
-            if payload.get("baseUrl"):
-                cfg["baseUrl"] = validate_url(payload["baseUrl"])
-            if "apiKey" in payload:
-                cfg["apiKey"] = str(payload["apiKey"]).strip()
-            save_path = Path(args.config)
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            write_atomic(save_path, cfg)
-            sync(args.config, args.out)
-            print(json.dumps({"ok": True, "message": "Saved configuration"}))
-        except Exception as e:
-            print(json.dumps({"ok": False, "error": str(e)}))
-    elif args.test:
-        # Read payload from stdin if available, else load from config file
-        u = ""
-        k = ""
-        if not sys.stdin.isatty():
-            try:
-                stdin_data = sys.stdin.read().strip()
-                if stdin_data:
-                    payload = json.loads(stdin_data)
-                    u = payload.get("baseUrl", "")
-                    k = payload.get("apiKey", "")
-            except Exception:
-                pass
-        if not u or not k:
-            cfg = load_config(args.config)
-            u = u or cfg.get("baseUrl", "")
-            k = k or cfg.get("apiKey", "")
+    if args.test:
+        cfg = load_config(args.config)
+        u = cfg.get("baseUrl", "")
+        k = cfg.get("apiKey", "")
         res = test_connection(u, k)
         print(json.dumps(res))
     elif args.create_birthday:

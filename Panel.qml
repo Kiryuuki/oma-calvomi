@@ -336,25 +336,32 @@ Panel {
   function testYuvomi(url, key) {
     root.isTestingYuvomi = true
     root.yuvomiTestResult = null
+    var cfg = {
+      baseUrl: (url || "").trim(),
+      apiKey: (key || "").trim(),
+      window: { pastDays: 14, futureDays: 90 }
+    }
+    yuvomiConfigFile.setText(JSON.stringify(cfg, null, 2) + "\n")
     testYuvomiProcess.running = true
-    testYuvomiProcess.stdin.write(JSON.stringify({ baseUrl: url, apiKey: key }) + "\n")
-    testYuvomiProcess.stdin.close()
   }
 
-  // Process: Save Yuvomi Config
+  // Process: Save Yuvomi Config & Sync
   Process {
-    id: saveYuvomiProcess
-    command: ["/usr/bin/python3", (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py", "--save-config"]
+    id: syncYuvomiProcess
+    command: ["/usr/bin/python3", (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py"]
     onExited: function(code) {
-      yuvomiConfigFile.reload()
       eventsFile.reload()
     }
   }
 
   function saveYuvomiConfig(url, key) {
-    saveYuvomiProcess.running = true
-    saveYuvomiProcess.stdin.write(JSON.stringify({ baseUrl: url, apiKey: key }) + "\n")
-    saveYuvomiProcess.stdin.close()
+    var cfg = {
+      baseUrl: (url || "").trim(),
+      apiKey: (key || "").trim(),
+      window: { pastDays: 14, futureDays: 90 }
+    }
+    yuvomiConfigFile.setText(JSON.stringify(cfg, null, 2) + "\n")
+    syncYuvomiProcess.running = true
   }
 
   // Process: Create Event in Yuvomi
