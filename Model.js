@@ -248,7 +248,7 @@ function indexEventsByDate(events) {
   if (!events || !events.length) return index
   for (var i = 0; i < events.length; i++) {
     var event = events[i]
-    var key = event && event.dateKey
+    var key = event && (event.dateKey || (event.start ? String(event.start).substr(0, 10) : ""))
     if (!key) continue
     if (!index[key]) index[key] = []
     index[key].push(event)

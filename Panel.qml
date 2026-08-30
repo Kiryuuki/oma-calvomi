@@ -345,20 +345,32 @@ Panel {
     testYuvomiProcess.running = true
   }
 
+  property bool yuvomiSaveSuccess: false
+
+  Timer {
+    id: yuvomiSaveTimer
+    interval: 4000
+    onTriggered: root.yuvomiSaveSuccess = false
+  }
+
   // Process: Save Yuvomi Config & Sync
   Process {
     id: syncYuvomiProcess
     command: ["/usr/bin/python3", (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py"]
     onExited: function(code) {
       eventsFile.reload()
+      root.yuvomiSaveSuccess = true
+      yuvomiSaveTimer.restart()
     }
   }
 
   function saveYuvomiConfig(url, key) {
+    root.yuvomiTestResult = null
     var cfg = {
       baseUrl: (url || "").trim(),
       apiKey: (key || "").trim(),
-      window: { pastDays: 14, futureDays: 90 }
+      window: { pastDays: 14, futureDays: 90 },
+      includeHolidays: true
     }
     yuvomiConfigFile.setText(JSON.stringify(cfg, null, 2) + "\n")
     syncYuvomiProcess.running = true
@@ -1704,6 +1716,7 @@ Panel {
             yuvomiApiKey: root.yuvomiConfig ? (root.yuvomiConfig.apiKey || "") : ""
             yuvomiTestResult: root.yuvomiTestResult
             isTestingYuvomi: root.isTestingYuvomi
+            saveSuccess: root.yuvomiSaveSuccess
             onYuvomiTestRequested: function(url, key) { root.testYuvomi(url, key) }
             onYuvomiConfigSaveRequested: function(url, key) { root.saveYuvomiConfig(url, key) }
 

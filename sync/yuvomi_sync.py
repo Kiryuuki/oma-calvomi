@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Yuvomi Calendar Sync & Management Engine for Omarchy Desktop.
-Provides secure synchronization, event creation, birthday tracking,
-and notification alerts with bounded descriptor-safe operations.
+Yuvomi Calendar Sync & Holiday Management Engine for Omarchy Desktop.
+Provides secure synchronization, country holiday detection and ingestion,
+event creation, birthday tracking, and desktop alerts with descriptor safety.
 """
 
 import argparse
@@ -26,6 +26,7 @@ except ImportError:
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "omarchy" / "yuvomi-sync.json"
 CONTRACT_PATH = Path.home() / ".local" / "state" / "omarchy" / "calendar-events.json"
 ALERT_STATE_PATH = Path.home() / ".local" / "state" / "omarchy" / "yuvomi-alerts-state.json"
+CACHE_DIR = Path.home() / ".local" / "state" / "omarchy"
 
 MAX_STATE_BYTES = 512 * 1024  # 512 KB ceiling
 
@@ -44,6 +45,72 @@ def get_local_timezone():
     return datetime.now().astimezone().tzinfo
 
 
+def detect_system_country():
+    """Detects country code (ISO-3166-1 alpha-2) and friendly name from timezone or locale."""
+    tz_country_map = {
+        "Manila": ("PH", "Philippines"),
+        "Tokyo": ("JP", "Japan"),
+        "Singapore": ("SG", "Singapore"),
+        "Seoul": ("KR", "South Korea"),
+        "Hong_Kong": ("HK", "Hong Kong"),
+        "Taipei": ("TW", "Taiwan"),
+        "Bangkok": ("TH", "Thailand"),
+        "Jakarta": ("ID", "Indonesia"),
+        "Kuala_Lumpur": ("MY", "Malaysia"),
+        "London": ("GB", "United Kingdom"),
+        "Paris": ("FR", "France"),
+        "Berlin": ("DE", "Germany"),
+        "New_York": ("US", "United States"),
+        "Chicago": ("US", "United States"),
+        "Los_Angeles": ("US", "United States"),
+        "Toronto": ("CA", "Canada"),
+        "Sydney": ("AU", "Australia"),
+    }
+    try:
+        target = os.readlink("/etc/localtime")
+        for tz_city, (cc, cname) in tz_country_map.items():
+            if tz_city in target:
+                return cc, cname
+    except Exception:
+        pass
+
+    loc = os.environ.get("LANG", "") or os.environ.get("LC_TIME", "")
+    if "_" in loc:
+        raw_cc = loc.split("_")[1].split(".")[0].upper()
+        if len(raw_cc) == 2:
+            return raw_cc, raw_cc
+
+    return "PH", "Philippines"
+
+
+def fetch_country_holidays(country_code, year):
+    """Fetches public holidays from Nager.Date API with local file caching."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_file = CACHE_DIR / f"holidays-{country_code}-{year}.json"
+
+    if cache_file.exists():
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list) and len(data) > 0:
+                    return data
+        except Exception:
+            pass
+
+    url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "omarchy-calvomi/1.0"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, list):
+                write_atomic(cache_file, data)
+                return data
+    except Exception as e:
+        print(f"Holidays API fetch note: {e}", file=sys.stderr)
+
+    return []
+
+
 def load_config(config_path=DEFAULT_CONFIG_PATH):
     path = Path(config_path)
     if not path.exists():
@@ -51,16 +118,17 @@ def load_config(config_path=DEFAULT_CONFIG_PATH):
             "baseUrl": "",
             "apiKey": "",
             "window": {"pastDays": 14, "futureDays": 90},
+            "includeHolidays": True,
         }
     try:
         st = path.stat()
         if st.st_uid != os.getuid() or not stat.S_ISREG(st.st_mode):
-            return {"baseUrl": "", "apiKey": "", "window": {"pastDays": 14, "futureDays": 90}}
+            return {"baseUrl": "", "apiKey": "", "window": {"pastDays": 14, "futureDays": 90}, "includeHolidays": True}
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
             return data if isinstance(data, dict) else {}
     except Exception:
-        return {"baseUrl": "", "apiKey": "", "window": {"pastDays": 14, "futureDays": 90}}
+        return {"baseUrl": "", "apiKey": "", "window": {"pastDays": 14, "futureDays": 90}, "includeHolidays": True}
 
 
 def write_atomic(path, data):
@@ -193,35 +261,30 @@ def create_event(title, start_iso, end_iso, all_day=False, location="", descript
         return {"ok": False, "error": str(e)}
 
 
-def sync(config_path=DEFAULT_CONFIG_PATH, out_path=CONTRACT_PATH):
+def sync(config_path=DEFAULT_CONFIG_PATH, out_path=CONTRACT_PATH, sync_holidays_to_server=False):
     cfg = load_config(config_path)
     base_url = cfg.get("baseUrl")
     api_key = cfg.get("apiKey")
-    if not base_url or not api_key:
-        doc = {
-            "version": 1,
-            "updatedAt": datetime.now().astimezone().isoformat(),
-            "timeZone": str(get_local_timezone()),
-            "events": [],
-        }
-        write_atomic(out_path, doc)
-        return
+    include_holidays = cfg.get("includeHolidays", True)
 
     now = datetime.now()
-    start_dt = (now - timedelta(days=14)).strftime("%Y-%m-%d")
-    end_dt = (now + timedelta(days=90)).strftime("%Y-%m-%d")
+    start_dt = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    end_dt = (now + timedelta(days=120)).strftime("%Y-%m-%d")
 
     events_data = []
-    try:
-        res = api_request(base_url, "/api/v1/calendar", api_key, params={"from": start_dt, "to": end_dt})
-        if isinstance(res, dict):
-            events_data = res.get("data") or res.get("events") or []
-        elif isinstance(res, list):
-            events_data = res
-    except Exception as e:
-        print(f"Calendar events fetch failed: {e}", file=sys.stderr)
+    if base_url and api_key:
+        try:
+            res = api_request(base_url, "/api/v1/calendar", api_key, params={"from": start_dt, "to": end_dt})
+            if isinstance(res, dict):
+                events_data = res.get("data") or res.get("events") or []
+            elif isinstance(res, list):
+                events_data = res
+        except Exception as e:
+            print(f"Calendar events fetch note: {e}", file=sys.stderr)
 
     normalized = []
+    yuvomi_titles = set()
+
     for ev in events_data:
         t = sanitize_text(ev.get("title") or "Untitled", 200)
         s = str(ev.get("start_datetime") or ev.get("start") or "").strip()
@@ -234,28 +297,83 @@ def sync(config_path=DEFAULT_CONFIG_PATH, out_path=CONTRACT_PATH):
         rrule = sanitize_text(ev.get("recurrence_rule") or ev.get("recurrence") or "", 100)
 
         if s:
+            date_k = s[:10]
+            yuvomi_titles.add((t.lower(), date_k))
             normalized.append({
                 "id": str(ev.get("id") or f"ev-{len(normalized)}"),
                 "title": t,
                 "start": s,
                 "end": e,
+                "dateKey": date_k,
                 "allDay": all_day,
                 "isBirthday": is_bday,
                 "location": loc,
                 "description": desc,
                 "color": col,
                 "recurrence": rrule,
+                "calendarId": "birthdays" if is_bday else "yuvomi",
+                "calendarName": "Birthdays" if is_bday else "Yuvomi",
                 "source": "yuvomi",
             })
+
+    # Country Holidays Integration
+    cc, cname = detect_system_country()
+    if include_holidays:
+        current_year = now.year
+        for yr in (current_year, current_year + 1):
+            h_list = fetch_country_holidays(cc, yr)
+            for h in h_list:
+                h_date = h.get("date")
+                h_name = h.get("name") or "Public Holiday"
+                h_local = h.get("localName") or ""
+                disp_title = f"{h_name} ({h_local})" if h_local and h_local.lower() != h_name.lower() else h_name
+
+                if h_date:
+                    normalized.append({
+                        "id": f"holiday-{cc}-{h_date}-{h_name}",
+                        "title": disp_title,
+                        "start": h_date,
+                        "end": h_date,
+                        "dateKey": h_date,
+                        "allDay": True,
+                        "isBirthday": False,
+                        "isHoliday": True,
+                        "location": cname,
+                        "description": f"Official Public Holiday in {cname}",
+                        "color": "#F59E0B",  # Gold / Amber for official holidays
+                        "recurrence": "",
+                        "calendarId": "holidays",
+                        "calendarName": f"Holidays ({cc})",
+                        "source": "country-holidays",
+                    })
+
+                    # If sync-to-server requested and not in Yuvomi yet
+                    if sync_holidays_to_server and base_url and api_key:
+                        if (disp_title.lower(), h_date) not in yuvomi_titles and (h_name.lower(), h_date) not in yuvomi_titles:
+                            try:
+                                api_request(base_url, "/api/v1/calendar", api_key, method="POST", body={
+                                    "title": disp_title,
+                                    "start_datetime": h_date,
+                                    "end_datetime": h_date,
+                                    "all_day": 1,
+                                    "color": "#F59E0B",
+                                    "location": cname,
+                                    "description": f"National Public Holiday ({cname})",
+                                })
+                                print(f"Added holiday to Yuvomi: {disp_title} on {h_date}")
+                            except Exception:
+                                pass
 
     doc = {
         "version": 1,
         "updatedAt": datetime.now().astimezone().isoformat(),
         "timeZone": str(get_local_timezone()),
+        "country": cc,
+        "countryName": cname,
         "events": normalized,
     }
     write_atomic(out_path, doc)
-    print(f"Synced {len(normalized)} events to {out_path}")
+    print(f"Synced {len(normalized)} events (including {cc} holidays) to {out_path}")
 
 
 def main():
@@ -265,6 +383,7 @@ def main():
     parser.add_argument("--test", action="store_true", help="Test connection")
     parser.add_argument("--create-event", action="store_true", help="Create calendar event")
     parser.add_argument("--create-birthday", action="store_true", help="Create birthday")
+    parser.add_argument("--sync-holidays", action="store_true", help="Push country holidays to Yuvomi")
     parser.add_argument("--title", default="")
     parser.add_argument("--name", default="")
     parser.add_argument("--birth-date", default="")
@@ -308,7 +427,7 @@ def main():
         )
         print(json.dumps(res))
     else:
-        sync(args.config, args.out)
+        sync(args.config, args.out, sync_holidays_to_server=args.sync_holidays)
 
 
 if __name__ == "__main__":

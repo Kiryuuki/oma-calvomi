@@ -29,6 +29,7 @@ Column {
   property string yuvomiApiKey: ""
   property var yuvomiTestResult: null
   property bool isTestingYuvomi: false
+  property bool saveSuccess: false
 
   signal calendarToggled(string calendarId)
   signal yearProgressToggled()
@@ -287,9 +288,29 @@ Column {
         }
       }
 
+      // Save Success Banner
+      BorderSurface {
+        visible: root.saveSuccess
+        width: parent.width
+        implicitHeight: Style.space(26)
+        radius: Style.cornerRadius
+        color: Qt.rgba(16/255, 185/255, 129/255, 0.15)
+        borderSpec: Border.controlSpec("normal", "#10B981", "#10B981")
+
+        Text {
+          textFormat: Text.PlainText
+          anchors.centerIn: parent
+          text: qsTr("✓ Settings Saved & Calendar Synchronized!")
+          color: "#10B981"
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+      }
+
       // Test Result Banner
       BorderSurface {
-        visible: root.yuvomiTestResult !== null
+        visible: root.yuvomiTestResult !== null && !root.saveSuccess
         width: parent.width
         implicitHeight: Style.space(26)
         radius: Style.cornerRadius
@@ -300,7 +321,7 @@ Column {
           textFormat: Text.PlainText
           anchors.centerIn: parent
           text: root.yuvomiTestResult && root.yuvomiTestResult.ok
-            ? ("✓ Connected · Yuvomi v" + (root.yuvomiTestResult.version || "") + " · " + root.yuvomiTestResult.eventCount + " events")
+            ? ("✓ Connected as " + (root.yuvomiTestResult.user || "User"))
             : ("✕ Connection Failed: " + (root.yuvomiTestResult ? (root.yuvomiTestResult.error || "Unreachable") : ""))
           color: root.yuvomiTestResult && root.yuvomiTestResult.ok ? "#87c095" : "#e06c75"
           font.family: root.fontFamily
