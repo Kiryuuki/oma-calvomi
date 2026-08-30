@@ -295,7 +295,7 @@ Panel {
     onFileChanged: reload()
   }
 
-  property var yuvomiConfig: ({ baseUrl: "http://dokploy.tail9fd122.ts.net:8443", apiKey: "" })
+  property var yuvomiConfig: ({ baseUrl: "", apiKey: "" })
 
   FileView {
     id: yuvomiConfigFile
@@ -306,7 +306,7 @@ Panel {
       try {
         root.yuvomiConfig = JSON.parse(text())
       } catch (e) {
-        root.yuvomiConfig = { baseUrl: "http://dokploy.tail9fd122.ts.net:8443", apiKey: "" }
+        root.yuvomiConfig = { baseUrl: "", apiKey: "" }
       }
     }
     onFileChanged: reload()
@@ -318,8 +318,7 @@ Panel {
 
   Process {
     id: testYuvomiProcess
-    property var testArgs: []
-    command: ["/usr/bin/python3", (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py", "--test"].concat(testArgs)
+    command: ["/usr/bin/python3", (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py", "--test"]
     stdout: StdioCollector {
       id: testOut
       waitForEnd: true
@@ -337,15 +336,15 @@ Panel {
   function testYuvomi(url, key) {
     root.isTestingYuvomi = true
     root.yuvomiTestResult = null
-    testYuvomiProcess.testArgs = ["--url", url, "--key", key]
     testYuvomiProcess.running = true
+    testYuvomiProcess.stdin.write(JSON.stringify({ baseUrl: url, apiKey: key }) + "\n")
+    testYuvomiProcess.stdin.close()
   }
 
   // Process: Save Yuvomi Config
   Process {
     id: saveYuvomiProcess
-    property var saveArgs: []
-    command: ["/usr/bin/python3", (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py", "--save-config"].concat(saveArgs)
+    command: ["/usr/bin/python3", (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py", "--save-config"]
     onExited: function(code) {
       yuvomiConfigFile.reload()
       eventsFile.reload()
@@ -353,8 +352,9 @@ Panel {
   }
 
   function saveYuvomiConfig(url, key) {
-    saveYuvomiProcess.saveArgs = ["--url", url, "--key", key]
     saveYuvomiProcess.running = true
+    saveYuvomiProcess.stdin.write(JSON.stringify({ baseUrl: url, apiKey: key }) + "\n")
+    saveYuvomiProcess.stdin.close()
   }
 
   // Process: Create Event in Yuvomi
@@ -543,6 +543,7 @@ Panel {
               spacing: Style.space(22)
 
               Text {
+                textFormat: Text.PlainText
                 anchors.baseline: heroDate.baseline
                 text: "󰃭"
                 color: heroMouse.containsMouse
@@ -553,6 +554,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 id: heroDate
                 anchors.verticalCenter: parent.verticalCenter
                 text: Qt.formatDate(root.today, "MMMM d")
@@ -619,6 +621,7 @@ Panel {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   width: parent.width - Style.space(70)
                   text: root.upcomingEvent
@@ -633,6 +636,7 @@ Panel {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.upcomingCountdown
                   color: Qt.darker(root.contentForeground, 1.4)
@@ -642,6 +646,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 id: yearLabel
                 visible: root.showYearProgress && !root.editingLife
                 anchors.left: parent.left
@@ -654,6 +659,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 id: yearPercent
                 visible: root.showYearProgress && !root.editingLife
                 anchors.right: parent.right
@@ -731,6 +737,7 @@ Panel {
                     spacing: Style.space(4)
                     Text { text: "📅"; font.pixelSize: Style.font.caption }
                     Text {
+                      textFormat: Text.PlainText
                       text: qsTr("Calendar Event")
                       color: newEventForm.formMode === "event" ? "white" : root.contentForeground
                       font.family: root.contentFontFamily
@@ -759,6 +766,7 @@ Panel {
                     spacing: Style.space(4)
                     Text { text: "🎂"; font.pixelSize: Style.font.caption }
                     Text {
+                      textFormat: Text.PlainText
                       text: qsTr("Birthday / Anniversary")
                       color: newEventForm.formMode === "birthday" ? "white" : root.contentForeground
                       font.family: root.contentFontFamily
@@ -910,6 +918,7 @@ Panel {
                       borderSpec: Border.controlSpec("normal", checked ? Color.accent : Qt.darker(root.contentForeground, 1.8), Color.accent)
 
                       Text {
+                        textFormat: Text.PlainText
                         anchors.centerIn: parent
                         text: "✓"
                         color: "white"
@@ -926,6 +935,7 @@ Panel {
                     }
 
                     Text {
+                      textFormat: Text.PlainText
                       anchors.verticalCenter: parent.verticalCenter
                       text: qsTr("All Day Event")
                       color: root.contentForeground
@@ -985,6 +995,7 @@ Panel {
                         border.color: active ? Color.accent : Qt.darker(root.contentForeground, 2.2)
 
                         Text {
+                          textFormat: Text.PlainText
                           id: rLabel
                           anchors.centerIn: parent
                           text: parent.modelData.label
@@ -1141,6 +1152,7 @@ Panel {
                         border.color: active ? "#E11D48" : Qt.darker(root.contentForeground, 2.2)
 
                         Text {
+                          textFormat: Text.PlainText
                           id: bLabel
                           anchors.centerIn: parent
                           text: parent.modelData.label
@@ -1200,6 +1212,7 @@ Panel {
                   borderSpec: Border.controlSpec("normal", Qt.darker(root.contentForeground, 2.0), Color.accent)
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: qsTr("Cancel")
                     color: Qt.darker(root.contentForeground, 1.5)
@@ -1222,6 +1235,7 @@ Panel {
                   borderSpec: Border.controlSpec("normal", newEventForm.formMode === "birthday" ? "#E11D48" : Color.accent, Color.accent)
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: newEventForm.formMode === "birthday" ? qsTr("Save Birthday to Yuvomi") : qsTr("Save Event to Yuvomi")
                     color: "white"
@@ -1299,6 +1313,7 @@ Panel {
                     : "transparent"
 
                   Text {
+                    textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: "W"
                     color: weekStartMouse.containsMouse
@@ -1334,6 +1349,7 @@ Panel {
                   model: root.weekdays
 
                   Text {
+                    textFormat: Text.PlainText
                     required property var modelData
                     width: root.cellWidth
                     horizontalAlignment: Text.AlignHCenter
@@ -1355,6 +1371,7 @@ Panel {
                   spacing: root.cellSpacing
 
                   Text {
+                    textFormat: Text.PlainText
                     width: root.weekColumnWidth
                     height: root.cellHeight
                     verticalAlignment: Text.AlignVCenter
@@ -1401,6 +1418,7 @@ Panel {
                         spacing: Style.space(2)
 
                         Text {
+                          textFormat: Text.PlainText
                           anchors.horizontalCenter: parent.horizontalCenter
                           text: cell.modelData.day
                           color: cell.isSelected && cell.isToday
@@ -1458,6 +1476,7 @@ Panel {
               height: monthLabel.implicitHeight + Style.space(10)
 
               Text {
+                textFormat: Text.PlainText
                 id: monthLabel
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.verticalCenter: parent.verticalCenter
@@ -1502,6 +1521,7 @@ Panel {
             spacing: Style.space(4)
 
             Text {
+              textFormat: Text.PlainText
               width: parent.width
               text: Qt.formatDate(root.selectedDate, "dddd d MMMM").toUpperCase()
               color: Qt.darker(root.contentForeground, 1.4)
@@ -1559,6 +1579,7 @@ Panel {
                   }
 
                   Text {
+                    textFormat: Text.PlainText
                     id: joinLabel
                     anchors.centerIn: parent
                     text: qsTr("Join")
@@ -1589,6 +1610,7 @@ Panel {
                   }
 
                   Text {
+                    textFormat: Text.PlainText
                     width: Style.space(44)
                     text: eventRow.isBday ? "󰎤" : (eventRow.modelData.allDay ? qsTr("All day") : Qt.formatDateTime(new Date(eventRow.modelData.start), "HH:mm"))
                     color: eventRow.isBday ? "#E11D48" : Qt.darker(root.contentForeground, eventRow.declined ? 2.2 : 1.5)
@@ -1609,6 +1631,7 @@ Panel {
                       Text {
                         width: parent.width - (recurrenceBadge.visible ? Style.space(18) : 0)
                         text: eventRow.modelData.title
+                        textFormat: Text.PlainText
                         color: eventRow.declined
                           ? Qt.darker(root.contentForeground, 2.0)
                           : (eventRow.isBday ? "#E11D48" : root.contentForeground)
@@ -1622,6 +1645,7 @@ Panel {
                         id: recurrenceBadge
                         visible: Boolean(eventRow.modelData.recurrence)
                         text: "󰑖"
+                        textFormat: Text.PlainText
                         color: Qt.darker(root.contentForeground, 2.0)
                         font.pixelSize: Style.font.caption
                       }
@@ -1630,6 +1654,7 @@ Panel {
                     Text {
                       width: parent.width
                       visible: text !== ""
+                      textFormat: Text.PlainText
                       text: {
                         if (eventRow.declined) return qsTr("Declined")
                         if (eventRow.modelData.description) return eventRow.modelData.description
@@ -1647,6 +1672,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               visible: root.selectedEvents.length === 0
               width: parent.width
               color: Qt.darker(root.contentForeground, 1.9)

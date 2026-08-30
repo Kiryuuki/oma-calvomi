@@ -46,6 +46,7 @@ Column {
   spacing: Style.space(10)
 
   component SectionTitle: Text {
+    textFormat: Text.PlainText
     color: root.faint
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
@@ -83,6 +84,7 @@ Column {
       spacing: Style.space(4)
 
       Text {
+        textFormat: Text.PlainText
         anchors.verticalCenter: parent.verticalCenter
         width: Style.space(14)
         text: toggle.checked ? "✓" : ""
@@ -108,6 +110,7 @@ Column {
         spacing: Style.space(1)
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           text: toggle.label
           color: toggle.checked ? root.foreground : root.muted
@@ -117,6 +120,7 @@ Column {
         }
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           visible: toggle.hint !== ""
           text: toggle.hint
@@ -154,6 +158,7 @@ Column {
         width: parent.width
         spacing: 2
         Text {
+          textFormat: Text.PlainText
           text: qsTr("Yuvomi Server URL")
           color: root.faint
           font.family: root.fontFamily
@@ -186,6 +191,7 @@ Column {
         width: parent.width
         spacing: 2
         Text {
+          textFormat: Text.PlainText
           text: qsTr("Yuvomi API Key / Bearer Token")
           color: root.faint
           font.family: root.fontFamily
@@ -231,12 +237,14 @@ Column {
             anchors.centerIn: parent
             spacing: Style.space(4)
             Text {
+              textFormat: Text.PlainText
               text: root.isTestingYuvomi ? "" : "󰑐"
               color: Color.accent
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
             Text {
+              textFormat: Text.PlainText
               text: root.isTestingYuvomi ? qsTr("Testing...") : qsTr("Test Connection")
               color: Color.accent
               font.family: root.fontFamily
@@ -262,6 +270,7 @@ Column {
           borderSpec: Border.controlSpec("normal", Color.accent, Color.accent)
 
           Text {
+            textFormat: Text.PlainText
             anchors.centerIn: parent
             text: qsTr("Save & Sync Now")
             color: "white"
@@ -288,6 +297,7 @@ Column {
         borderSpec: Border.controlSpec("normal", root.yuvomiTestResult && root.yuvomiTestResult.ok ? "#87c095" : "#e06c75", Color.accent)
 
         Text {
+          textFormat: Text.PlainText
           anchors.centerIn: parent
           text: root.yuvomiTestResult && root.yuvomiTestResult.ok
             ? ("✓ Connected · Yuvomi v" + (root.yuvomiTestResult.version || "") + " · " + root.yuvomiTestResult.eventCount + " events")
@@ -307,6 +317,7 @@ Column {
   SectionTitle { text: qsTr("CALENDARS") }
 
   Text {
+    textFormat: Text.PlainText
     width: parent.width
     visible: root.calendars.length === 0
     text: qsTr("Nothing synced yet, so there is nothing to choose from.")
@@ -364,6 +375,7 @@ Column {
   SectionTitle { text: qsTr("BAR LABEL & DESKTOP ALERTS") }
 
   Text {
+    textFormat: Text.PlainText
     width: parent.width
     text: qsTr("How early the bar gives up the clock to announce what is next.")
     color: root.faint
@@ -393,6 +405,7 @@ Column {
         border.color: active ? root.muted : Qt.darker(root.foreground, 2.4)
 
         Text {
+          textFormat: Text.PlainText
           id: leadLabel
           anchors.centerIn: parent
           text: modelData === 0 ? qsTr("Never") : modelData + qsTr("min")
@@ -410,6 +423,7 @@ Column {
   SectionTitle { text: qsTr("SYNC STATUS") }
 
   Text {
+    textFormat: Text.PlainText
     width: parent.width
     color: root.faint
     font.family: root.fontFamily
