@@ -605,29 +605,156 @@ Panel {
             }
           }
 
-          // ------------------ YEAR / LIFE PROGRESS ------------------
+          // ------------------ YEAR / LIFE PROGRESS (MEMENTO MORI) ------------------
           Item {
             visible: !root.settingsOpen && !root.addEventOpen
             width: parent.width
-            height: yearBlock.y + yearBlock.height
+            implicitHeight: yearBlock.implicitHeight + Style.space(12)
 
-            Item {
+            Column {
               id: yearBlock
-              y: Style.space(6)
               anchors.horizontalCenter: parent.horizontalCenter
               width: gridColumn.width
-              height: Math.max(yearLabel.implicitHeight, Style.space(10))
+              spacing: Style.space(6)
 
-              TapHandler {
-                enabled: root.showYearProgress && !root.editingLife
-                onDoubleTapped: root.startEditingLife()
+              // 1. INLINE MEMENTO MORI EDITOR (Activated by Double-Clicking Year Progress)
+              RowLayout {
+                visible: root.editingLife
+                width: parent.width
+                spacing: Style.space(6)
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: qsTr("Memento Mori · Birth Year:")
+                  color: Color.accent
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                BorderSurface {
+                  implicitWidth: Style.space(60)
+                  implicitHeight: Style.space(26)
+                  radius: Style.cornerRadius
+                  color: Style.hoverFillFor(root.contentForeground, root.contentForeground)
+                  borderSpec: Border.controlSpec("focus", Color.accent, Color.accent)
+
+                  TextInput {
+                    id: bornField
+                    anchors.fill: parent
+                    anchors.margins: Style.space(4)
+                    color: root.contentForeground
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                    horizontalAlignment: TextInput.AlignHCenter
+                    selectByMouse: true
+                    inputMask: "0000"
+                    Keys.onPressed: function(event) { root.handleLifeKey(event, expectancyField) }
+                  }
+                }
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: qsTr("Expectancy:")
+                  color: root.contentForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                BorderSurface {
+                  implicitWidth: Style.space(45)
+                  implicitHeight: Style.space(26)
+                  radius: Style.cornerRadius
+                  color: Style.hoverFillFor(root.contentForeground, root.contentForeground)
+                  borderSpec: Border.controlSpec("focus", Color.accent, Color.accent)
+
+                  TextInput {
+                    id: expectancyField
+                    anchors.fill: parent
+                    anchors.margins: Style.space(4)
+                    color: root.contentForeground
+                    font.family: root.contentFontFamily
+                    font.pixelSize: Style.font.caption
+                    horizontalAlignment: TextInput.AlignHCenter
+                    selectByMouse: true
+                    inputMask: "000"
+                    Keys.onPressed: function(event) { root.handleLifeKey(event, bornField) }
+                  }
+                }
+
+                Item { Layout.fillWidth: true }
+
+                // Save
+                BorderSurface {
+                  implicitWidth: Style.space(26)
+                  implicitHeight: Style.space(26)
+                  radius: Style.cornerRadius
+                  color: Color.accent
+                  borderSpec: Border.controlSpec("normal", Color.accent, Color.accent)
+                  Text {
+                    textFormat: Text.PlainText
+                    anchors.centerIn: parent
+                    text: "✓"
+                    color: "white"
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.commitLife()
+                  }
+                }
+
+                // Clear
+                BorderSurface {
+                  visible: root.birthYear > 0
+                  implicitWidth: Style.space(26)
+                  implicitHeight: Style.space(26)
+                  radius: Style.cornerRadius
+                  color: "transparent"
+                  borderSpec: Border.controlSpec("normal", "#e06c75", Color.accent)
+                  Text {
+                    textFormat: Text.PlainText
+                    anchors.centerIn: parent
+                    text: "󰆴"
+                    color: "#e06c75"
+                    font.pixelSize: Style.font.caption
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: { root.clearLife(); root.cancelEditingLife() }
+                  }
+                }
+
+                // Cancel
+                BorderSurface {
+                  implicitWidth: Style.space(26)
+                  implicitHeight: Style.space(26)
+                  radius: Style.cornerRadius
+                  color: "transparent"
+                  borderSpec: Border.controlSpec("normal", Qt.darker(root.contentForeground, 2.0), Color.accent)
+                  Text {
+                    textFormat: Text.PlainText
+                    anchors.centerIn: parent
+                    text: "✕"
+                    color: root.contentForeground
+                    font.pixelSize: Style.font.caption
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.cancelEditingLife()
+                  }
+                }
               }
 
+              // 2. DEFAULT VIEW: UPCOMING EVENT OR YEAR + LIFE PROGRESS
               Row {
-                visible: !root.showYearProgress
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
+                visible: !root.showYearProgress && !root.editingLife
+                width: parent.width
+                anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Style.space(4)
 
                 Rectangle {
@@ -664,49 +791,113 @@ Panel {
                 }
               }
 
-              Text {
-                textFormat: Text.PlainText
-                id: yearLabel
+              // Year Progress Bar
+              Item {
                 visible: root.showYearProgress && !root.editingLife
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.today.getFullYear()
-                color: Qt.darker(root.contentForeground, 1.5)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.bodySmall
-                font.letterSpacing: 1
-              }
+                width: parent.width
+                implicitHeight: Math.max(yearLabel.implicitHeight, Style.space(10))
 
-              Text {
-                textFormat: Text.PlainText
-                id: yearPercent
-                visible: root.showYearProgress && !root.editingLife
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.yearDonePercent + "%"
-                color: root.contentForeground
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.bodySmall
-              }
+                TapHandler {
+                  enabled: root.showYearProgress && !root.editingLife
+                  onDoubleTapped: root.startEditingLife()
+                }
 
-              Rectangle {
-                id: yearTrack
-                visible: root.showYearProgress && !root.editingLife
-                anchors.left: yearLabel.right
-                anchors.right: yearPercent.left
-                anchors.leftMargin: Style.space(12)
-                anchors.rightMargin: Style.space(12)
-                anchors.verticalCenter: parent.verticalCenter
-                height: Style.space(6)
-                radius: Style.cornerRadius > 0 ? height / 2 : 0
-                color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.12)
+                Text {
+                  textFormat: Text.PlainText
+                  id: yearLabel
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.today.getFullYear()
+                  color: Qt.darker(root.contentForeground, 1.5)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.letterSpacing: 1
+                }
+
+                Text {
+                  textFormat: Text.PlainText
+                  id: yearPercent
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.yearDonePercent + "%"
+                  color: root.contentForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
 
                 Rectangle {
-                  width: Math.round(parent.width * root.yearDone)
-                  height: parent.height
-                  radius: parent.radius
-                  color: Style.selectedStateColor(root.contentForeground, Color.accent)
-                  Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                  id: yearTrack
+                  anchors.left: yearLabel.right
+                  anchors.right: yearPercent.left
+                  anchors.leftMargin: Style.space(12)
+                  anchors.rightMargin: Style.space(12)
+                  anchors.verticalCenter: parent.verticalCenter
+                  height: Style.space(6)
+                  radius: Style.cornerRadius > 0 ? height / 2 : 0
+                  color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.12)
+
+                  Rectangle {
+                    width: Math.round(parent.width * root.yearDone)
+                    height: parent.height
+                    radius: parent.radius
+                    color: Style.selectedStateColor(root.contentForeground, Color.accent)
+                    Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                  }
+                }
+              }
+
+              // Memento Mori: Life Progress Bar (Shown when birthYear is configured)
+              Item {
+                visible: root.showYearProgress && !root.editingLife && root.birthYear > 0
+                width: parent.width
+                implicitHeight: Math.max(lifeLabel.implicitHeight, Style.space(10))
+
+                TapHandler {
+                  onDoubleTapped: root.startEditingLife()
+                }
+
+                Text {
+                  textFormat: Text.PlainText
+                  id: lifeLabel
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Age " + root.age
+                  color: Qt.darker(root.contentForeground, 1.5)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.letterSpacing: 1
+                }
+
+                Text {
+                  textFormat: Text.PlainText
+                  id: lifePercent
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.lifeDonePercent + "%"
+                  color: Color.accent
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.bold: true
+                }
+
+                Rectangle {
+                  id: lifeTrack
+                  anchors.left: lifeLabel.right
+                  anchors.right: lifePercent.left
+                  anchors.leftMargin: Style.space(12)
+                  anchors.rightMargin: Style.space(12)
+                  anchors.verticalCenter: parent.verticalCenter
+                  height: Style.space(6)
+                  radius: Style.cornerRadius > 0 ? height / 2 : 0
+                  color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.12)
+
+                  Rectangle {
+                    width: Math.round(parent.width * root.lifeDone)
+                    height: parent.height
+                    radius: parent.radius
+                    color: Color.accent
+                    Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                  }
                 }
               }
             }
