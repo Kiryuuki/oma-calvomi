@@ -63,8 +63,6 @@ Configure via the in-panel settings tab, or manually in `~/.config/omarchy/yuvom
 
 ---
 
-## License and Attribution
+## License
 
-- Licensed under MIT.
-- Built for Omarchy Quattro Desktop.
-- Original calendar base cloned and enhanced from `tmn73.calendar`.
+Source-Available Non-Commercial License (PolyForm Noncommercial 1.0.0). Free for personal, educational, and homelab use. Commercial sale, distribution for fee, or commercial re-licensing is prohibited without author permission.

@@ -4,7 +4,7 @@
   "name": "OmaCalvomi",
   "version": "1.0.0",
   "author": "Kiryuuki",
-  "license": "MIT",
+  "license": "Source-Available Non-Commercial (PolyForm-Noncommercial-1.0.0)",
   "description": "Calendar & Agenda for Omarchy with month grid, ISO weeks, Yuvomi synchronization, quick event & birthday creation, recurrence patterns, and meeting alerts. Requires a self-hosted Yuvomi server.",
   "kinds": [
     "bar-widget"
