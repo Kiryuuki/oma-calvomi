@@ -380,6 +380,7 @@ def main():
     parser = argparse.ArgumentParser(description="Yuvomi Calendar Sync Engine")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Config file path")
     parser.add_argument("--out", default=str(CONTRACT_PATH), help="Output state path")
+    parser.add_argument("--save-config", action="store_true", help="Save config JSON passed via stdin with 0600 permissions")
     parser.add_argument("--test", action="store_true", help="Test connection")
     parser.add_argument("--create-event", action="store_true", help="Create calendar event")
     parser.add_argument("--create-birthday", action="store_true", help="Create birthday")
@@ -398,8 +399,29 @@ def main():
     parser.add_argument("--check-alerts", action="store_true")
     args = parser.parse_args()
 
-    if args.test:
-        cfg = load_config(args.config)
+    if args.save_config:
+        raw_stdin = sys.stdin.read().strip() if not sys.stdin.isatty() else ""
+        if raw_stdin:
+            try:
+                cfg_data = json.loads(raw_stdin)
+                if isinstance(cfg_data, dict):
+                    write_atomic(args.config, cfg_data)
+                    print(json.dumps({"ok": True}))
+                    sys.exit(0)
+            except Exception as e:
+                print(json.dumps({"ok": False, "error": str(e)}))
+                sys.exit(1)
+        print(json.dumps({"ok": False, "error": "No config payload provided on stdin"}))
+        sys.exit(1)
+    elif args.test:
+        raw_stdin = sys.stdin.read().strip() if not sys.stdin.isatty() else ""
+        if raw_stdin:
+            try:
+                cfg = json.loads(raw_stdin)
+            except Exception:
+                cfg = {}
+        else:
+            cfg = load_config(args.config)
         u = cfg.get("baseUrl", "")
         k = cfg.get("apiKey", "")
         res = test_connection(u, k)

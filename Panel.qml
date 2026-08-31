@@ -341,8 +341,9 @@ Panel {
       apiKey: (key || "").trim(),
       window: { pastDays: 14, futureDays: 90 }
     }
-    yuvomiConfigFile.setText(JSON.stringify(cfg, null, 2) + "\n")
     testYuvomiProcess.running = true
+    testYuvomiProcess.stdin.write(JSON.stringify(cfg) + "\n")
+    testYuvomiProcess.stdin.close()
   }
 
   property bool yuvomiSaveSuccess: false
@@ -353,7 +354,17 @@ Panel {
     onTriggered: root.yuvomiSaveSuccess = false
   }
 
-  // Process: Save Yuvomi Config & Sync
+  // Process: Save Yuvomi Config (writes 0600 atomically)
+  Process {
+    id: saveYuvomiConfigProcess
+    command: ["/usr/bin/python3", (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py", "--save-config"]
+    onExited: function(code) {
+      yuvomiConfigFile.reload()
+      syncYuvomiProcess.running = true
+    }
+  }
+
+  // Process: Sync Yuvomi Events
   Process {
     id: syncYuvomiProcess
     command: ["/usr/bin/python3", (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py"]
@@ -372,8 +383,9 @@ Panel {
       window: { pastDays: 14, futureDays: 90 },
       includeHolidays: true
     }
-    yuvomiConfigFile.setText(JSON.stringify(cfg, null, 2) + "\n")
-    syncYuvomiProcess.running = true
+    saveYuvomiConfigProcess.running = true
+    saveYuvomiConfigProcess.stdin.write(JSON.stringify(cfg) + "\n")
+    saveYuvomiConfigProcess.stdin.close()
   }
 
   // Process: Create Event in Yuvomi
