@@ -7,6 +7,7 @@ event creation, birthday tracking, and desktop alerts with descriptor safety.
 
 import argparse
 from datetime import datetime, date, timedelta
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -29,6 +30,86 @@ ALERT_STATE_PATH = Path.home() / ".local" / "state" / "omarchy" / "yuvomi-alerts
 CACHE_DIR = Path.home() / ".local" / "state" / "omarchy"
 
 MAX_STATE_BYTES = 512 * 1024  # 512 KB ceiling
+MAX_RESPONSE_BYTES = 512 * 1024  # 512 KB ceiling for remote HTTP responses
+
+
+def is_loopback(host: str) -> bool:
+    """Checks if a hostname or IP string represents a loopback address."""
+    if not host:
+        return False
+    h = host.strip().lower()
+    if h.startswith("[") and h.endswith("]"):
+        h = h[1:-1]
+    elif ":" in h and h.count(":") == 1:
+        h = h.split(":", 1)[0]
+
+    if h in ("localhost", "localhost.localdomain"):
+        return True
+    try:
+        ip = ipaddress.ip_address(h)
+        return ip.is_loopback
+    except ValueError:
+        return False
+
+
+class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """
+    HTTP redirect handler that enforces:
+    - Same-origin redirection only (scheme, host, and port must match).
+    - No cross-origin leaks of sensitive Authorization headers.
+    - Rejection of downgrade from HTTPS to insecure HTTP.
+    - Insecure HTTP redirects only permitted to validated loopback addresses.
+    """
+    def __init__(self, allow_http_loopback: bool = False):
+        super().__init__()
+        self.allow_http_loopback = allow_http_loopback
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        orig_parsed = urllib.parse.urlsplit(req.full_url)
+        new_url_resolved = urllib.parse.urljoin(req.full_url, newurl)
+        new_parsed = urllib.parse.urlsplit(new_url_resolved)
+
+        if new_parsed.scheme not in ("https", "http"):
+            raise urllib.error.HTTPError(
+                new_url_resolved, code, f"Forbidden redirect scheme: {new_parsed.scheme}", headers, fp
+            )
+
+        if new_parsed.scheme == "http":
+            if not (self.allow_http_loopback and is_loopback(new_parsed.hostname or "")):
+                raise urllib.error.HTTPError(
+                    new_url_resolved, code, "Forbidden redirect to insecure HTTP", headers, fp
+                )
+
+        orig_port = orig_parsed.port or (443 if orig_parsed.scheme == "https" else 80)
+        new_port = new_parsed.port or (443 if new_parsed.scheme == "https" else 80)
+        orig_host = (orig_parsed.hostname or "").lower()
+        new_host = (new_parsed.hostname or "").lower()
+
+        if (orig_parsed.scheme != new_parsed.scheme) or (orig_host != new_host) or (orig_port != new_port):
+            raise urllib.error.HTTPError(
+                new_url_resolved, code, "Cross-origin redirects are forbidden to prevent credential leakage", headers, fp
+            )
+
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def read_bounded(resp, max_bytes: int = MAX_RESPONSE_BYTES, chunk_size: int = 16384) -> bytes:
+    """Reads response body with strict upper byte ceiling to prevent unbounded memory consumption."""
+    content_length = resp.headers.get("Content-Length")
+    if content_length and content_length.isdigit() and int(content_length) > max_bytes:
+        raise ValueError(f"Response Content-Length {content_length} exceeds ceiling of {max_bytes} bytes")
+
+    chunks = []
+    total = 0
+    while True:
+        chunk = resp.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(f"Response size exceeded ceiling of {max_bytes} bytes")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def get_local_timezone():
@@ -84,7 +165,7 @@ def detect_system_country():
 
 
 def fetch_country_holidays(country_code, year):
-    """Fetches public holidays from Nager.Date API with local file caching."""
+    """Fetches public holidays from Nager.Date API with local file caching and bounded response parsing."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = CACHE_DIR / f"holidays-{country_code}-{year}.json"
 
@@ -99,12 +180,39 @@ def fetch_country_holidays(country_code, year):
 
     url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "omarchy-calvomi/1.0"})
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        opener = urllib.request.build_opener(SafeRedirectHandler(allow_http_loopback=False))
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "omarchy-calvomi/1.0",
+                "Accept": "application/json",
+            },
+        )
+        with opener.open(req, timeout=6) as resp:
+            final_parsed = urllib.parse.urlsplit(resp.geturl())
+            if final_parsed.scheme != "https":
+                raise ValueError("Insecure redirect during holiday fetch")
+            charset = resp.headers.get_content_charset() or "utf-8"
+            raw_bytes = read_bounded(resp, max_bytes=MAX_RESPONSE_BYTES)
+            raw = raw_bytes.decode(charset, errors="ignore")
+            data = json.loads(raw) if raw.strip() else []
             if isinstance(data, list):
-                write_atomic(cache_file, data)
-                return data
+                sanitized_holidays = []
+                for item in data[:200]:  # Cardinality cap: 200 holidays
+                    if not isinstance(item, dict):
+                        continue
+                    dt = str(item.get("date", ""))[:10]
+                    nm = sanitize_text(item.get("name") or "", 200)
+                    loc = sanitize_text(item.get("localName") or "", 200)
+                    if dt and nm:
+                        sanitized_holidays.append({
+                            "date": dt,
+                            "name": nm,
+                            "localName": loc,
+                            "countryCode": country_code,
+                        })
+                write_atomic(cache_file, sanitized_holidays)
+                return sanitized_holidays
     except Exception as e:
         print(f"Holidays API fetch note: {e}", file=sys.stderr)
 
@@ -156,39 +264,62 @@ def write_atomic(path, data):
         raise
 
 
-def validate_url(url: str) -> str:
+def validate_url(url: str, has_credentials: bool = False) -> str:
+    """
+    Validates URL scheme and destination.
+    Insecure HTTP is strictly rejected when credentials are present,
+    unless targeting validated loopback addresses (127.0.0.1, ::1, localhost).
+    """
     url = (url or "").strip()
     if not url:
         raise ValueError("URL cannot be empty")
-    parsed = urllib.parse.urlparse(url)
+    parsed = urllib.parse.urlsplit(url)
     if parsed.scheme not in ("https", "http"):
         raise ValueError(f"Invalid URL scheme: {parsed.scheme}. Must be https:// or http://")
-    if not parsed.netloc:
+    if not parsed.netloc or not parsed.hostname:
         raise ValueError("Invalid URL host")
+
+    if parsed.scheme == "http" and has_credentials:
+        if not is_loopback(parsed.hostname):
+            raise ValueError(
+                "Insecure HTTP scheme is not allowed with credentials unless using a loopback address (127.0.0.1, ::1, localhost)"
+            )
     return url
 
 
 def api_request(base_url, endpoint, api_key, method="GET", body=None, params=None, timeout=12):
-    valid_base = validate_url(base_url)
+    has_creds = bool(api_key)
+    valid_base = validate_url(base_url, has_credentials=has_creds)
     url = urllib.parse.urljoin(valid_base.rstrip("/") + "/", endpoint.lstrip("/"))
     if params:
         url += "?" + urllib.parse.urlencode(params)
 
     headers = {
-        "Authorization": f"Bearer {api_key}",
         "Accept": "application/json",
         "User-Agent": "omarchy-yuvomi-sync/2.0",
     }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     data = None
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
 
+    base_parsed = urllib.parse.urlsplit(valid_base)
+    allow_loopback = is_loopback(base_parsed.hostname or "")
+    opener = urllib.request.build_opener(SafeRedirectHandler(allow_http_loopback=allow_loopback))
+
     req = urllib.request.Request(url, headers=headers, data=data, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with opener.open(req, timeout=timeout) as resp:
+        final_url = resp.geturl()
+        final_parsed = urllib.parse.urlsplit(final_url)
+        if final_parsed.scheme == "http" and has_creds and not is_loopback(final_parsed.hostname or ""):
+            raise ValueError("Final URL resolved to insecure HTTP with credentials")
+
         charset = resp.headers.get_content_charset() or "utf-8"
-        raw = resp.read().decode(charset, errors="ignore")
+        raw_bytes = read_bounded(resp, max_bytes=MAX_RESPONSE_BYTES)
+        raw = raw_bytes.decode(charset, errors="ignore")
         return json.loads(raw) if raw.strip() else {}
 
 
@@ -276,9 +407,13 @@ def sync(config_path=DEFAULT_CONFIG_PATH, out_path=CONTRACT_PATH, sync_holidays_
         try:
             res = api_request(base_url, "/api/v1/calendar", api_key, params={"from": start_dt, "to": end_dt})
             if isinstance(res, dict):
-                events_data = res.get("data") or res.get("events") or []
+                raw_events = res.get("data") or res.get("events") or []
             elif isinstance(res, list):
-                events_data = res
+                raw_events = res
+            else:
+                raw_events = []
+            if isinstance(raw_events, list):
+                events_data = [e for e in raw_events if isinstance(e, dict)][:1000]
         except Exception as e:
             print(f"Calendar events fetch note: {e}", file=sys.stderr)
 
@@ -370,10 +505,10 @@ def sync(config_path=DEFAULT_CONFIG_PATH, out_path=CONTRACT_PATH, sync_holidays_
         "timeZone": str(get_local_timezone()),
         "country": cc,
         "countryName": cname,
-        "events": normalized,
+        "events": normalized[:2000],
     }
     write_atomic(out_path, doc)
-    print(f"Synced {len(normalized)} events (including {cc} holidays) to {out_path}")
+    print(f"Synced {min(len(normalized), 2000)} events (including {cc} holidays) to {out_path}")
 
 
 def main():
