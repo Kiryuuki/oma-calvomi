@@ -25,6 +25,7 @@ except ImportError:
     ZoneInfo = None
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "omarchy" / "yuvomi-sync.json"
+FALLBACK_CONFIG_PATH = Path.home() / ".config" / "omarchy" / "taskvomi.json"
 CONTRACT_PATH = Path.home() / ".local" / "state" / "omarchy" / "calendar-events.json"
 ALERT_STATE_PATH = Path.home() / ".local" / "state" / "omarchy" / "yuvomi-alerts-state.json"
 CACHE_DIR = Path.home() / ".local" / "state" / "omarchy"
@@ -33,62 +34,13 @@ MAX_STATE_BYTES = 512 * 1024  # 512 KB ceiling
 MAX_RESPONSE_BYTES = 512 * 1024  # 512 KB ceiling for remote HTTP responses
 
 
-def is_loopback(host: str) -> bool:
-    """Checks if a hostname or IP string represents a loopback address."""
-    if not host:
-        return False
-    h = host.strip().lower()
-    if h.startswith("[") and h.endswith("]"):
-        h = h[1:-1]
-    elif ":" in h and h.count(":") == 1:
-        h = h.split(":", 1)[0]
-
-    if h in ("localhost", "localhost.localdomain"):
-        return True
-    try:
-        ip = ipaddress.ip_address(h)
-        return ip.is_loopback
-    except ValueError:
-        return False
-
-
-def is_local_or_private(host: str) -> bool:
-    """Checks if a hostname or IP string represents a loopback, private network, Tailscale, or local domain."""
-    if is_loopback(host):
-        return True
-    h = host.strip().lower()
-    if h.startswith("[") and h.endswith("]"):
-        h = h[1:-1]
-    elif ":" in h and h.count(":") == 1:
-        h = h.split(":", 1)[0]
-
-    if h.endswith(".local") or h.endswith(".lan") or h.endswith(".home") or h.endswith(".internal"):
-        return True
-    if "." not in h:
-        return True
-    try:
-        ip = ipaddress.ip_address(h)
-        if ip.is_loopback or ip.is_private:
-            return True
-        if ip in ipaddress.ip_network("100.64.0.0/10"):
-            return True
-        return False
-    except ValueError:
-        return False
-
-
 class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     """
     HTTP redirect handler that enforces:
     - Same-origin redirection only (scheme, host, and port must match).
     - No cross-origin leaks of sensitive Authorization headers.
     - Rejection of downgrade from HTTPS to insecure HTTP.
-    - Insecure HTTP redirects only permitted to validated loopback or local/private addresses.
     """
-    def __init__(self, allow_http: bool = False):
-        super().__init__()
-        self.allow_http = allow_http
-
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         orig_parsed = urllib.parse.urlsplit(req.full_url)
         new_url_resolved = urllib.parse.urljoin(req.full_url, newurl)
@@ -99,11 +51,10 @@ class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
                 new_url_resolved, code, f"Forbidden redirect scheme: {new_parsed.scheme}", headers, fp
             )
 
-        if new_parsed.scheme == "http":
-            if not (self.allow_http and is_local_or_private(new_parsed.hostname or "")):
-                raise urllib.error.HTTPError(
-                    new_url_resolved, code, "Forbidden redirect to insecure HTTP", headers, fp
-                )
+        if orig_parsed.scheme == "https" and new_parsed.scheme == "http":
+            raise urllib.error.HTTPError(
+                new_url_resolved, code, "Forbidden downgrade from HTTPS to insecure HTTP", headers, fp
+            )
 
         orig_port = orig_parsed.port or (443 if orig_parsed.scheme == "https" else 80)
         new_port = new_parsed.port or (443 if new_parsed.scheme == "https" else 80)
@@ -245,23 +196,41 @@ def fetch_country_holidays(country_code, year):
 
 
 def load_config(config_path=DEFAULT_CONFIG_PATH):
+    cfg = {
+        "baseUrl": "",
+        "apiKey": "",
+        "window": {"pastDays": 14, "futureDays": 90},
+        "includeHolidays": True,
+    }
     path = Path(config_path)
-    if not path.exists():
-        return {
-            "baseUrl": "",
-            "apiKey": "",
-            "window": {"pastDays": 14, "futureDays": 90},
-            "includeHolidays": True,
-        }
-    try:
-        st = path.stat()
-        if st.st_uid != os.getuid() or not stat.S_ISREG(st.st_mode):
-            return {"baseUrl": "", "apiKey": "", "window": {"pastDays": 14, "futureDays": 90}, "includeHolidays": True}
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, dict) else {}
-    except Exception:
-        return {"baseUrl": "", "apiKey": "", "window": {"pastDays": 14, "futureDays": 90}, "includeHolidays": True}
+    if path.exists():
+        try:
+            st = path.stat()
+            if st.st_uid == os.getuid() and stat.S_ISREG(st.st_mode):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        cfg.update(data)
+                        if cfg.get("baseUrl") and cfg.get("apiKey"):
+                            return cfg
+        except Exception:
+            pass
+
+    # Fallback to taskvomi.json if yuvomi-sync.json is missing or lacks creds
+    if FALLBACK_CONFIG_PATH.exists():
+        try:
+            st = FALLBACK_CONFIG_PATH.stat()
+            if st.st_uid == os.getuid() and stat.S_ISREG(st.st_mode):
+                with open(FALLBACK_CONFIG_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and data.get("baseUrl"):
+                        cfg["baseUrl"] = data.get("baseUrl", "")
+                        cfg["apiKey"] = data.get("apiKey", "")
+                        return cfg
+        except Exception:
+            pass
+
+    return cfg
 
 
 def write_atomic(path, data):
@@ -290,10 +259,6 @@ def write_atomic(path, data):
 
 
 def validate_url(url: str, has_credentials: bool = False) -> str:
-    """
-    Validates URL scheme and destination.
-    Insecure HTTP is permitted for loopback, local network, Tailscale, and homelab addresses.
-    """
     url = (url or "").strip()
     if not url:
         raise ValueError("URL cannot be empty")
@@ -302,18 +267,11 @@ def validate_url(url: str, has_credentials: bool = False) -> str:
         raise ValueError(f"Invalid URL scheme: {parsed.scheme}. Must be https:// or http://")
     if not parsed.netloc or not parsed.hostname:
         raise ValueError("Invalid URL host")
-
-    if parsed.scheme == "http" and has_credentials:
-        if not is_local_or_private(parsed.hostname):
-            raise ValueError(
-                f"Insecure HTTP is only permitted for local/private network hosts ({parsed.hostname} is public). Use HTTPS instead."
-            )
     return url
 
 
 def api_request(base_url, endpoint, api_key, method="GET", body=None, params=None, timeout=12):
-    has_creds = bool(api_key)
-    valid_base = validate_url(base_url, has_credentials=has_creds)
+    valid_base = validate_url(base_url, has_credentials=bool(api_key))
     url = urllib.parse.urljoin(valid_base.rstrip("/") + "/", endpoint.lstrip("/"))
     if params:
         url += "?" + urllib.parse.urlencode(params)
@@ -330,17 +288,9 @@ def api_request(base_url, endpoint, api_key, method="GET", body=None, params=Non
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
 
-    base_parsed = urllib.parse.urlsplit(valid_base)
-    allow_local_http = is_local_or_private(base_parsed.hostname or "")
-    opener = urllib.request.build_opener(SafeRedirectHandler(allow_http=allow_local_http))
-
+    opener = urllib.request.build_opener(SafeRedirectHandler())
     req = urllib.request.Request(url, headers=headers, data=data, method=method)
     with opener.open(req, timeout=timeout) as resp:
-        final_url = resp.geturl()
-        final_parsed = urllib.parse.urlsplit(final_url)
-        if final_parsed.scheme == "http" and has_creds and not is_local_or_private(final_parsed.hostname or ""):
-            raise ValueError("Final URL resolved to insecure HTTP with credentials")
-
         charset = resp.headers.get_content_charset() or "utf-8"
         raw_bytes = read_bounded(resp, max_bytes=MAX_RESPONSE_BYTES)
         raw = raw_bytes.decode(charset, errors="ignore")
