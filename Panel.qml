@@ -304,12 +304,37 @@ Panel {
     printErrors: false
     onLoaded: {
       try {
-        root.yuvomiConfig = JSON.parse(text())
-      } catch (e) {
-        root.yuvomiConfig = { baseUrl: "", apiKey: "" }
-      }
+        var parsed = JSON.parse(text())
+        if (parsed && parsed.baseUrl) {
+          root.yuvomiConfig = parsed
+          return
+        }
+      } catch (e) {}
+      taskvomiFallbackConfigFile.reload()
     }
     onFileChanged: reload()
+  }
+
+  FileView {
+    id: taskvomiFallbackConfigFile
+    path: (Quickshell.env("HOME") || "") + "/.config/omarchy/taskvomi.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      if (!root.yuvomiConfig || !root.yuvomiConfig.baseUrl) {
+        try {
+          var tcfg = JSON.parse(text())
+          if (tcfg && tcfg.baseUrl) {
+            root.yuvomiConfig = {
+              baseUrl: tcfg.baseUrl || "",
+              apiKey: tcfg.apiKey || ""
+            }
+          }
+        } catch (e) {
+          root.yuvomiConfig = { baseUrl: "", apiKey: "" }
+        }
+      }
+    }
   }
 
   // Process: Test Yuvomi Connection
