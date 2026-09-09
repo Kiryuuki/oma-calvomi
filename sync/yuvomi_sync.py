@@ -52,17 +52,42 @@ def is_loopback(host: str) -> bool:
         return False
 
 
+def is_local_or_private(host: str) -> bool:
+    """Checks if a hostname or IP string represents a loopback, private network, Tailscale, or local domain."""
+    if is_loopback(host):
+        return True
+    h = host.strip().lower()
+    if h.startswith("[") and h.endswith("]"):
+        h = h[1:-1]
+    elif ":" in h and h.count(":") == 1:
+        h = h.split(":", 1)[0]
+
+    if h.endswith(".local") or h.endswith(".lan") or h.endswith(".home") or h.endswith(".internal"):
+        return True
+    if "." not in h:
+        return True
+    try:
+        ip = ipaddress.ip_address(h)
+        if ip.is_loopback or ip.is_private:
+            return True
+        if ip in ipaddress.ip_network("100.64.0.0/10"):
+            return True
+        return False
+    except ValueError:
+        return False
+
+
 class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
     """
     HTTP redirect handler that enforces:
     - Same-origin redirection only (scheme, host, and port must match).
     - No cross-origin leaks of sensitive Authorization headers.
     - Rejection of downgrade from HTTPS to insecure HTTP.
-    - Insecure HTTP redirects only permitted to validated loopback addresses.
+    - Insecure HTTP redirects only permitted to validated loopback or local/private addresses.
     """
-    def __init__(self, allow_http_loopback: bool = False):
+    def __init__(self, allow_http: bool = False):
         super().__init__()
-        self.allow_http_loopback = allow_http_loopback
+        self.allow_http = allow_http
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         orig_parsed = urllib.parse.urlsplit(req.full_url)
@@ -75,7 +100,7 @@ class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
             )
 
         if new_parsed.scheme == "http":
-            if not (self.allow_http_loopback and is_loopback(new_parsed.hostname or "")):
+            if not (self.allow_http and is_local_or_private(new_parsed.hostname or "")):
                 raise urllib.error.HTTPError(
                     new_url_resolved, code, "Forbidden redirect to insecure HTTP", headers, fp
                 )
@@ -267,8 +292,7 @@ def write_atomic(path, data):
 def validate_url(url: str, has_credentials: bool = False) -> str:
     """
     Validates URL scheme and destination.
-    Insecure HTTP is strictly rejected when credentials are present,
-    unless targeting validated loopback addresses (127.0.0.1, ::1, localhost).
+    Insecure HTTP is permitted for loopback, local network, Tailscale, and homelab addresses.
     """
     url = (url or "").strip()
     if not url:
@@ -280,9 +304,9 @@ def validate_url(url: str, has_credentials: bool = False) -> str:
         raise ValueError("Invalid URL host")
 
     if parsed.scheme == "http" and has_credentials:
-        if not is_loopback(parsed.hostname):
+        if not is_local_or_private(parsed.hostname):
             raise ValueError(
-                "Insecure HTTP scheme is not allowed with credentials unless using a loopback address (127.0.0.1, ::1, localhost)"
+                f"Insecure HTTP is only permitted for local/private network hosts ({parsed.hostname} is public). Use HTTPS instead."
             )
     return url
 
@@ -307,14 +331,14 @@ def api_request(base_url, endpoint, api_key, method="GET", body=None, params=Non
         headers["Content-Type"] = "application/json"
 
     base_parsed = urllib.parse.urlsplit(valid_base)
-    allow_loopback = is_loopback(base_parsed.hostname or "")
-    opener = urllib.request.build_opener(SafeRedirectHandler(allow_http_loopback=allow_loopback))
+    allow_local_http = is_local_or_private(base_parsed.hostname or "")
+    opener = urllib.request.build_opener(SafeRedirectHandler(allow_http=allow_local_http))
 
     req = urllib.request.Request(url, headers=headers, data=data, method=method)
     with opener.open(req, timeout=timeout) as resp:
         final_url = resp.geturl()
         final_parsed = urllib.parse.urlsplit(final_url)
-        if final_parsed.scheme == "http" and has_creds and not is_loopback(final_parsed.hostname or ""):
+        if final_parsed.scheme == "http" and has_creds and not is_local_or_private(final_parsed.hostname or ""):
             raise ValueError("Final URL resolved to insecure HTTP with credentials")
 
         charset = resp.headers.get_content_charset() or "utf-8"
@@ -333,15 +357,22 @@ def sanitize_text(text: str, max_len: int = 500) -> str:
 def test_connection(base_url, api_key):
     if not base_url or not api_key:
         return {"ok": False, "error": "Base URL and API Key are required."}
-    try:
-        data = api_request(base_url, "/api/v1/auth/me", api_key, timeout=8)
-        user = data.get("user", {})
-        username = sanitize_text(user.get("username") or user.get("name") or "Authenticated")
-        return {"ok": True, "user": username}
-    except urllib.error.HTTPError as e:
-        return {"ok": False, "error": f"HTTP {e.code}: {e.reason}"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    endpoints = ["/api/v1/auth/me", "/api/v1/calendar", "/api/v1/tasks"]
+    last_error = None
+    for ep in endpoints:
+        try:
+            data = api_request(base_url, ep, api_key, timeout=8)
+            user = data.get("user", {}) if isinstance(data, dict) else {}
+            username = sanitize_text(user.get("username") or user.get("name") or "Connected")
+            return {"ok": True, "user": username}
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                return {"ok": False, "error": f"HTTP {e.code}: Unauthorized / Invalid API Token"}
+            last_error = f"HTTP {e.code}: {e.reason}"
+            continue
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": False, "error": last_error or "Connection failed"}
 
 
 def create_birthday(name, birth_date, notes="", reminder_offset="1440", config_path=DEFAULT_CONFIG_PATH):
@@ -515,8 +546,10 @@ def main():
     parser = argparse.ArgumentParser(description="Yuvomi Calendar Sync Engine")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Config file path")
     parser.add_argument("--out", default=str(CONTRACT_PATH), help="Output state path")
-    parser.add_argument("--save-config", action="store_true", help="Save config JSON passed via stdin with 0600 permissions")
+    parser.add_argument("--save-config", action="store_true", help="Save config JSON passed via stdin or CLI with 0600 permissions")
     parser.add_argument("--test", action="store_true", help="Test connection")
+    parser.add_argument("--base-url", default="", help="Yuvomi Base URL")
+    parser.add_argument("--api-key", default="", help="Yuvomi API Key")
     parser.add_argument("--create-event", action="store_true", help="Create calendar event")
     parser.add_argument("--create-birthday", action="store_true", help="Create birthday")
     parser.add_argument("--sync-holidays", action="store_true", help="Push country holidays to Yuvomi")
@@ -534,31 +567,44 @@ def main():
     parser.add_argument("--check-alerts", action="store_true")
     args = parser.parse_args()
 
-    if args.save_config:
-        raw_stdin = sys.stdin.read().strip() if not sys.stdin.isatty() else ""
-        if raw_stdin:
+    def get_stdin_json():
+        if not sys.stdin.isatty():
             try:
-                cfg_data = json.loads(raw_stdin)
-                if isinstance(cfg_data, dict):
-                    write_atomic(args.config, cfg_data)
-                    print(json.dumps({"ok": True}))
-                    sys.exit(0)
-            except Exception as e:
-                print(json.dumps({"ok": False, "error": str(e)}))
-                sys.exit(1)
-        print(json.dumps({"ok": False, "error": "No config payload provided on stdin"}))
+                import select
+                r, _, _ = select.select([sys.stdin], [], [], 0.05)
+                if r:
+                    raw = sys.stdin.read().strip()
+                    if raw:
+                        return json.loads(raw)
+            except Exception:
+                pass
+        return {}
+
+    if args.save_config:
+        cfg_data = get_stdin_json()
+        if args.base_url:
+            cfg_data["baseUrl"] = args.base_url
+        if args.api_key:
+            cfg_data["apiKey"] = args.api_key
+        if cfg_data:
+            existing = load_config(args.config)
+            existing.update(cfg_data)
+            write_atomic(args.config, existing)
+            print(json.dumps({"ok": True}))
+            sys.exit(0)
+        print(json.dumps({"ok": False, "error": "No config payload provided"}))
         sys.exit(1)
     elif args.test:
-        raw_stdin = sys.stdin.read().strip() if not sys.stdin.isatty() else ""
-        if raw_stdin:
-            try:
-                cfg = json.loads(raw_stdin)
-            except Exception:
-                cfg = {}
-        else:
+        u = args.base_url
+        k = args.api_key
+        if not u or not k:
+            stdin_cfg = get_stdin_json()
+            u = u or stdin_cfg.get("baseUrl", "")
+            k = k or stdin_cfg.get("apiKey", "")
+        if not u or not k:
             cfg = load_config(args.config)
-        u = cfg.get("baseUrl", "")
-        k = cfg.get("apiKey", "")
+            u = u or cfg.get("baseUrl", "")
+            k = k or cfg.get("apiKey", "")
         res = test_connection(u, k)
         print(json.dumps(res))
     elif args.create_birthday:

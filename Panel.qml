@@ -318,32 +318,36 @@ Panel {
 
   Process {
     id: testYuvomiProcess
-    command: ["/usr/bin/python3", (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py", "--test"]
     stdout: StdioCollector {
       id: testOut
       waitForEnd: true
       onStreamFinished: {
         root.isTestingYuvomi = false
+        var out = testOut.text.trim()
         try {
-          root.yuvomiTestResult = JSON.parse(testOut.text)
+          root.yuvomiTestResult = JSON.parse(out)
         } catch (e) {
-          root.yuvomiTestResult = { ok: false, error: "Failed to parse response" }
+          root.yuvomiTestResult = { ok: false, error: "Failed to parse response: " + (out || "No output") }
         }
       }
+    }
+    onExited: function(code) {
+      root.isTestingYuvomi = false
     }
   }
 
   function testYuvomi(url, key) {
     root.isTestingYuvomi = true
     root.yuvomiTestResult = null
-    var cfg = {
-      baseUrl: (url || "").trim(),
-      apiKey: (key || "").trim(),
-      window: { pastDays: 14, futureDays: 90 }
-    }
+    testYuvomiProcess.command = [
+      "/usr/bin/python3",
+      (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py",
+      "--test",
+      "--base-url", (url || "").trim(),
+      "--api-key", (key || "").trim()
+    ]
+    testYuvomiProcess.running = false
     testYuvomiProcess.running = true
-    testYuvomiProcess.stdin.write(JSON.stringify(cfg) + "\n")
-    testYuvomiProcess.stdin.close()
   }
 
   property bool yuvomiSaveSuccess: false
@@ -357,9 +361,9 @@ Panel {
   // Process: Save Yuvomi Config (writes 0600 atomically)
   Process {
     id: saveYuvomiConfigProcess
-    command: ["/usr/bin/python3", (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py", "--save-config"]
     onExited: function(code) {
       yuvomiConfigFile.reload()
+      syncYuvomiProcess.running = false
       syncYuvomiProcess.running = true
     }
   }
@@ -377,15 +381,15 @@ Panel {
 
   function saveYuvomiConfig(url, key) {
     root.yuvomiTestResult = null
-    var cfg = {
-      baseUrl: (url || "").trim(),
-      apiKey: (key || "").trim(),
-      window: { pastDays: 14, futureDays: 90 },
-      includeHolidays: true
-    }
+    saveYuvomiConfigProcess.command = [
+      "/usr/bin/python3",
+      (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/kiryuuki.oma-calvomi/sync/yuvomi_sync.py",
+      "--save-config",
+      "--base-url", (url || "").trim(),
+      "--api-key", (key || "").trim()
+    ]
+    saveYuvomiConfigProcess.running = false
     saveYuvomiConfigProcess.running = true
-    saveYuvomiConfigProcess.stdin.write(JSON.stringify(cfg) + "\n")
-    saveYuvomiConfigProcess.stdin.close()
   }
 
   // Process: Create Event in Yuvomi
